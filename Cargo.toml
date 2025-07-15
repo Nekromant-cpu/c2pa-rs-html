@@ -7,7 +7,7 @@ members = [
     "export_schema",
     "macros",
     "make_test_images",
-    "sdk",
+    "sdk", "wasm_html_verifier",
 ]
 
 # members in this workspace can share this version setting

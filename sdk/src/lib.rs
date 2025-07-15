@@ -133,6 +133,12 @@ pub mod validation_status;
 #[doc(inline)]
 pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
+pub use crate::asset_handlers::html_io::HtmlIO;
+#[cfg(feature = "v1_api")]
+pub use store::Store;
+#[cfg(feature = "v1_api")]
+pub use asset_io::CAIReader;
+#[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
 pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
