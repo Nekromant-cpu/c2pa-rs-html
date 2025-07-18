@@ -21,22 +21,23 @@ static SUPPORTED_TYPES: [&str; 2] = [
     "text/html"
 ];
 
+// type of the later into the HTML injected script tag
 const C2PA_SCRIPT_TYPE: &str = "application/c2pa-manifest";
 
 // Regex patterns
-/// <script type="application/c2pa-manifest">BASE64_ENCODED_MANIFEST</script>
+/// <script type="application/c2pa-manifest">BASE64_ENCODED_MANIFEST</script> // this is the format
 const C2PA_REGEX_CAPTURE: &str = r#"(?s)<script[^>]*type=["']application/c2pa-manifest["'][^>]*>(.*?)</script>"#;
 const C2PA_REGEX_FULL: &str = r#"(?s)\s*<script[^>]*type=["']application/c2pa-manifest["'][^>]*>.*?</script>\s*"#;
 const HTML_HEAD_TAG: &str = r#"(?i)<head[^>]*>"#;
 
-static DEBUG: bool = false; // Set to true to enable debug prints
+static DEBUG: bool = false;
 
 pub struct HtmlIO {}
 
 
 impl CAIReader for HtmlIO {
     
-    /// read manifest from embedded data
+    /// read manifest data from HTML stream with embedded manifest
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         if DEBUG { println!("read_cai"); }
         
@@ -48,6 +49,7 @@ impl CAIReader for HtmlIO {
         }
     }
 
+    /// HTML contains no xmp
     fn read_xmp(&self, _reader: &mut dyn CAIRead) -> Option<String> {
         if DEBUG { println!("read_xmp"); }
         None
@@ -56,7 +58,7 @@ impl CAIReader for HtmlIO {
 
 impl CAIWriter for HtmlIO {
 
-    /// embed manifest into HTML
+    /// embed the base64 encoded manifest bytes inside a script tag into the HTML stream
     fn write_cai(
         &self,
         input_stream: &mut dyn CAIRead,
@@ -69,7 +71,7 @@ impl CAIWriter for HtmlIO {
         input_stream.rewind()?;
         input_stream.read_to_string(&mut input_html)?;
 
-        let manifest_b64 = STANDARD.encode(store_bytes);
+        let manifest_b64 = STANDARD.encode(store_bytes); // encode the manifest bytes in base64 to ensure the HTML will not break
         let manifest_script = format!(r#"<script type="{C2PA_SCRIPT_TYPE}">{manifest_b64}</script>"#);
 
         // Regex to match optional whitespace before </body>
@@ -78,7 +80,7 @@ impl CAIWriter for HtmlIO {
         let re = regex::Regex::new(C2PA_REGEX_FULL)
             .map_err(|_| Error::InvalidAsset("Regex error".into()))?;
 
-        let updated_html = if re.is_match(&input_html) {
+        let updated_html = if re.is_match(&input_html) { // replace any existing c2pa script tag and manifest
             re.replace(&input_html, &manifest_script).into_owned()
         } else if re_body.is_match(&input_html) {
             // Case 2: Insert before </body>, removing leading whitespace
@@ -86,6 +88,7 @@ impl CAIWriter for HtmlIO {
                 .replace(&input_html, format!("{manifest_script}</body>"))
                 .into_owned()
         } else {
+            // fallback: if HTML is broken insert manifest at the end
             let trimmed = input_html.trim_end();
             format!("{}{}", trimmed, manifest_script)
         };
@@ -105,6 +108,7 @@ impl CAIWriter for HtmlIO {
         let mut buffer: Vec<u8> = Vec::new();
         {
             let mut output_stream = std::io::Cursor::new(&mut buffer);
+            // make sure the input stream is in the correct format (contains at least a dummy manifest)
             add_required_segs_to_stream(input_stream, &mut output_stream)?;
         }
 
@@ -113,8 +117,8 @@ impl CAIWriter for HtmlIO {
             detect_manifest_location(&mut buffer_cursor)?;
 
         let manifest = manifest_opt.ok_or(Error::JumbfNotFound)?;
-        let b64_len = STANDARD.encode(&manifest).len();
-        let start = insertion_point;
+        let b64_len = STANDARD.encode(&manifest).len(); // length of only the manifest data (without script tag)
+        let start = insertion_point; // insertion point is the start of the base64 encoded manifest in the html stream
         let html_len = buffer.len();
 
         Ok(vec![
@@ -126,17 +130,17 @@ impl CAIWriter for HtmlIO {
             HashObjectPositions {
                 offset: 0,
                 length: start,
-                htype: HashBlockObjectType::Other,
+                htype: HashBlockObjectType::Other, // part before manifest
             },
             HashObjectPositions {
                 offset: start + b64_len,
-                length: html_len.saturating_sub(start + b64_len),
-                htype: HashBlockObjectType::Other,
+                length: html_len.saturating_sub(start + b64_len), // until the end of the stream
+                htype: HashBlockObjectType::Other, // part after manifest
             },
         ])
     }
 
-    /// remove the manifest from the html file stream
+    /// remove the manifest from the html stream
     fn remove_cai_store_from_stream(
         &self,
         input_stream: &mut dyn CAIRead,
@@ -150,7 +154,7 @@ impl CAIWriter for HtmlIO {
         let re = regex::Regex::new(C2PA_REGEX_FULL)
             .map_err(|_| Error::InvalidAsset("Regex error".into()))?;
 
-        let cleaned = re.replace(&html, "").into_owned();
+        let cleaned = re.replace(&html, "").into_owned(); // remove the script tag from the stream
 
         output_stream.rewind()?;
         output_stream.write_all(cleaned.as_bytes())?;
@@ -187,7 +191,7 @@ impl AssetIO for HtmlIO {
         if DEBUG { println!("read_cai_store: {}", asset_path.display()); }
         
         let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
+        self.read_cai(&mut f) // simply call the function that operates on the stream...
     }
 
     fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
@@ -197,7 +201,7 @@ impl AssetIO for HtmlIO {
             .read(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
+        let mut temp_file = tempfile_builder("c2pa_temp")?; // create a temp file while writing
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
         rename_or_move(temp_file, asset_path)
     }
@@ -236,7 +240,7 @@ fn add_required_segs_to_stream(
         detect_manifest_location(input_stream)?;
 
     let need_manifest = if let Some(encoded_manifest) = encoded_manifest_opt {
-        encoded_manifest.is_empty()
+        encoded_manifest.is_empty() // if there is already a manifest and it is not empty we don't need one
     } else {
         true
     };
@@ -260,7 +264,7 @@ fn add_required_segs_to_stream(
 }
 
 /// find the location of the manifest inside the html stream
-/// returns the manifest_opt and the location
+/// returns the manifest_opt and the location of the manifest content (not the location of the script tag)
 fn detect_manifest_location(
     input_stream: &mut dyn CAIRead,
 ) -> Result<(Option<Vec<u8>>, usize)> {
@@ -274,7 +278,7 @@ fn detect_manifest_location(
     let mut output: Option<Vec<u8>> = None;
     let mut insertion_point: usize = 0;
 
-    // 1. Try to capture existing manifest content
+    // Try to capture existing manifest content
     let manifest_re = Regex::new(C2PA_REGEX_CAPTURE).unwrap();
     if let Some(caps) = manifest_re.captures(&html) {
         if let Some(encoded) = caps.get(1) {
@@ -283,12 +287,12 @@ fn detect_manifest_location(
                 output = Some(STANDARD.decode(trimmed).map_err(|_| {
                     Error::InvalidAsset("HTML manifest bad base64 encoding".into())
                 })?);
-                insertion_point = encoded.start(); //insertion_point = caps.get(0).unwrap().start(); // Position of the full tag
+                insertion_point = encoded.start(); // Position of base64 encoded manifest bytes (not the position of the tag)
             }
         }
     }
 
-    // 2. If no manifest found, try to locate <head> tag for insertion
+    // fallback if no manifest found, try to locate <head> tag for insertion -> this should NOT happen
     if output.is_none() {
         if DEBUG { println!("no manifest found"); }
         let head_re = Regex::new(HTML_HEAD_TAG).unwrap();
