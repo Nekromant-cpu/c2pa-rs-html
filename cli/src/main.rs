@@ -25,6 +25,8 @@ use std::{
     str::FromStr,
 };
 
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
     identity::validator::CawgValidator, Builder, ClaimGeneratorInfo, Error, Ingredient,
@@ -538,6 +540,13 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    let now = SystemTime::now();
+    let start = Instant::now();
+    let millis = now.duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+    
+    println!("Current time in millis: {}", millis);
     let args = CliArgs::parse();
 
     // set RUST_LOG=debug to get detailed debug logging
@@ -810,6 +819,13 @@ fn main() -> Result<()> {
         println!("{reader}");
     }
 
+    let after = SystemTime::now();
+    let millis_after = after.duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+    
+    println!("Current time in millis: {}", millis_after);
+    println!("Signing took: {} ms", start.elapsed().as_millis());
     Ok(())
 }
 
